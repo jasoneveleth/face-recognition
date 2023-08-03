@@ -31,17 +31,20 @@ def play(song): return subprocess.Popen(['afplay', song])
 
 def music():
     process = None
+    last_happy = time.time() - 1
     was_happy = False
+    is_happy = False
     for emotion in main(cam, faceNet, genderNet):
-        print(was_happy, emotion)
-        if was_happy and emotion != 'happy':
-            print("kill")
+        if emotion == 'happy':
+            last_happy = time.time()
+        is_happy = (time.time() - last_happy) < 1
+
+        if was_happy and not is_happy:
             os.kill(process.pid, signal.SIGTERM)
-        if (not was_happy) and emotion == 'happy':
-            print("play!!")
+        if (not was_happy) and is_happy:
             process = play('queen.mp3')
 
-        was_happy = emotion == 'happy'
+        was_happy = is_happy
 
 def main(cam, faceNet, genderNet):
     while True:
