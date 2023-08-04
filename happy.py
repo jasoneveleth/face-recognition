@@ -6,7 +6,6 @@ import signal
 import subprocess
 from deepface import DeepFace
 
-
 def getFaceBox(net, frame, conf_threshold=0.7):
     frameOpencvDnn = frame.copy()
     frameHeight = frameOpencvDnn.shape[0]
@@ -27,14 +26,22 @@ def getFaceBox(net, frame, conf_threshold=0.7):
             cv2.rectangle(frameOpencvDnn, (x1, y1), (x2, y2), (0, 255, 0), int(round(frameHeight/150)), 8)
     return frameOpencvDnn, bboxes
 
-def play(song): return subprocess.Popen(['afplay', song])
+def main():
+    # continuity camera is usually first, so try to skip it
+    cam = cv2.VideoCapture(1)
+    if not cam.read()[0]:
+        cam = cv2.VideoCapture(0)
 
-def music():
+    faceProto = "models/opencv_face_detector.pbtxt"
+    faceModel = "models/opencv_face_detector_uint8.pb"
+    faceNet = cv2.dnn.readNet(faceModel, faceProto)
+
+    # MAIN LOOP
     process = None
     last_happy = time.time() - 1
     was_happy = False
     is_happy = False
-    for emotion in main(cam, faceNet, genderNet):
+    for emotion in detection(cam, faceNet):
         if emotion == 'happy':
             last_happy = time.time()
         is_happy = (time.time() - last_happy) < 1
@@ -42,11 +49,32 @@ def music():
         if was_happy and not is_happy:
             os.kill(process.pid, signal.SIGTERM)
         if (not was_happy) and is_happy:
-            process = play('queen.mp3')
+            process = subprocess.Popen(['afplay', 'media/queen.mp3'])
 
         was_happy = is_happy
+    # END MAIN LOOP
 
-def main(cam, faceNet, genderNet):
+    cam.release()
+    cv2.destroyAllWindows()
+
+# turn off pesky loading messages
+def analyze(*args, **kwargs):
+    f = open(os.devnull, 'w')
+    sys.stderr = f
+    ret = None
+    try:
+        ret = DeepFace.analyze(*args, **kwargs)
+    except ValueError as e:
+        print(e)
+    finally:
+        sys.stderr = sys.__stderr__
+        return ret
+
+def detection(cam, faceNet):
+    # takes picture
+    # caluclates boxes
+    # yields emotion
+    # shows picture
     while True:
         _, frame = cam.read()
 
@@ -55,28 +83,13 @@ def main(cam, faceNet, genderNet):
         for bb in bboxes:
             padding = 200
             face80 = frame[max(0,bb[1]-padding):min(bb[3]+padding,frame.shape[0]-1),max(0,bb[0]-padding):min(bb[2]+padding, frame.shape[1]-1)]
-            try:
-                # we assume there's only one face
-                f = open(os.devnull, 'w')
-                sys.stderr = f
-                firstface = DeepFace.analyze(face80, actions=['emotion'])[0]
-                sys.stderr = sys.__stderr__
-                output = firstface['emotion']
+            faces = analyze(face80, actions=['emotion'])
+            if faces:
+                # we assume there's only one face detected by emotion network, 
+                # since we are only showing it 1 bounding box
+                output = faces[0]['emotion']
                 emotion = max(output, key=output.get)
                 yield emotion
-            except ValueError as e:
-                sys.stderr = sys.__stderr__
-                print(e)
-
-            padding = 20
-            face20 = frame[max(0,bb[1]-padding):min(bb[3]+padding,frame.shape[0]-1),max(0,bb[0]-padding):min(bb[2]+padding, frame.shape[1]-1)]
-            # opencv is BGR not RGB, so they have this handy option that we want off
-            blob = cv2.dnn.blobFromImage(face20, 1.0, (227, 227), swapRB=False)
-            genderNet.setInput(blob)
-            genderPreds = genderNet.forward()
-            gender = ['Male', 'Female'][genderPreds[0].argmax()]
-            if gender == 'Female':
-                emotion = "Wayy too hot"
 
             label = f"{emotion}"
             cv2.putText(frameFace, label, (bb[0], bb[1]-10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2, cv2.LINE_AA)
@@ -85,25 +98,7 @@ def main(cam, faceNet, genderNet):
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
-
-# continuity camera is usually first, so try to skip it
-cam = cv2.VideoCapture(1)
-if not cam.read()[0]:
-    cam = cv2.VideoCapture(0)
-
-genderProto = "gender_deploy.prototxt"
-genderModel = "gender_net.caffemodel"
-genderNet = cv2.dnn.readNet(genderModel, genderProto)
-genderNet.setPreferableBackend(cv2.dnn.DNN_BACKEND_CUDA)
-genderNet.setPreferableTarget(cv2.dnn.DNN_TARGET_CUDA)
-
-faceProto = "opencv_face_detector.pbtxt"
-faceModel = "opencv_face_detector_uint8.pb"
-faceNet = cv2.dnn.readNet(faceModel, faceProto)
-
+# # ideas:
 # change the tempo based on the emotion
 # you progress through the song whenever you're happy
-
-music()
-cam.release()
-cv2.destroyAllWindows()
+main()
